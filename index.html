@@ -74,8 +74,8 @@ V.registrar_Enrollment=()=>{const rs=Object.entries(S.req);return`<div class="ca
 async function setEnr(id,on){await sb.from('students').update({enrolled:on}).eq('id',id);if(S.req[id])await sb.from('requests').update({status:on?'enrolled':'pending'}).eq('student_id',id);await load();render()}
 async function decide(id,ok){const r=S.req[id];if(ok==1&&r.subs.some(c=>{const x=sub(c,stu(id));return x&&unmet(id,x).length})&&!confirm('Prerequisites not met. Enroll anyway?')){render();return}
  await sb.from('students').update({enrolled:ok==1}).eq('id',id);go(sb.from('requests').update({status:ok==1?'enrolled':ok==2?'pending':'rejected'}).eq('student_id',id))}
-V.registrar_Students=()=>`<div class="card"><h2>Students (2nd–4th year)</h2>
- <div class="row"><input id="ni" placeholder="Student ID"><input id="nn" placeholder="Full name"><input id="nc" placeholder="Course" size="8"><select id="ny"><option>2</option><option>3</option><option>4</option></select><input id="nt" inputmode="decimal" placeholder="Tuition ₱" style="width:120px;text-align:right" onchange="this.value=fmt(pa(this.value))"><button class="btn p" onclick="addStu()">Add</button></div>
+V.registrar_Students=()=>`<div class="card"><h2>Students</h2>
+ <div class="row"><input id="ni" placeholder="Student ID"><input id="nn" placeholder="Full name"><input id="nc" placeholder="Course" size="8"><select id="ny"><option>1</option><option>2</option><option>3</option><option>4</option></select><input id="nt" inputmode="decimal" placeholder="Tuition ₱" style="width:120px;text-align:right" onchange="this.value=fmt(pa(this.value))"><button class="btn p" onclick="addStu()">Add</button></div>
  <div class="row"><button class="btn" onclick="bulkLogins()">Create logins for all students without one</button></div><div class="scroll"><table><tr><th>ID</th><th>Name</th><th>Yr</th><th>Tag</th><th>Curriculum</th><th>Enrolled</th><th>Login</th><th></th></tr>${S.students.map(s=>`<tr><td>${esc(s.id)}</td><td>${esc(s.name)}<br><span class="mut">${esc(s.course)}</span></td><td>${s.year}</td><td><select onchange="go(sb.from('students').update({status:this.value}).eq('id','${s.id}'))">${STAT.map(k=>`<option ${s.status==k?'selected':''}>${k}</option>`).join('')}</select></td><td><select onchange="go(sb.from('students').update({curriculum:this.value}).eq('id','${s.id}'))"><option value="old" ${s.curriculum=='old'?'selected':''}>Old</option><option value="new" ${s.curriculum=='new'?'selected':''}>New</option></select></td><td><input type="checkbox" ${s.enrolled?'checked':''} onchange="setEnr('${s.id}',this.checked)"></td><td>${s.user_id?'<span class="ok">Has login</span>':`<button class="btn s" onclick="mkLogin('${s.id}')">Create login</button>`}</td><td><button class="btn s d" onclick="delStu('${s.id}')">✕</button></td></tr>`).join('')}</table></div></div>`;
 function addStu(){const id=$('#ni').value.trim(),n=$('#nn').value.trim();if(!id||!n)return;go(sb.from('students').insert({id,name:n,course:$('#nc').value,year:+$('#ny').value,tuition:pa($('#nt').value)}))}
 function delStu(id){if(confirm('Remove this student and their records?'))go(sb.from('students').delete().eq('id',id))}
@@ -123,32 +123,42 @@ async function impSubj(){const rows=parseCSV($('#scsv').value);if(!rows.length)r
  try{await up('subjects',[...m.values()],{onConflict:'curriculum,program,major,code'});subCur=cu;flash=`Imported ${m.size} ${cu}-curriculum subject(s).`}catch(e){alert('Import stopped: '+e.message)}await load();render()}
 async function addFac(){const u=$('#fu').value.trim(),p=$('#fp').value;if(!u||p.length<6)return alert('Username and a 6+ character password are required.');
  try{const uid=await newUser(u,p);const r=await sb.from('profiles').insert({id:uid,username:u,full_name:$('#fn').value||u,role:$('#fr').value});if(r.error)throw r.error;flash=`Login created. Username: <b>${esc(u)}</b> (role: ${$('#fr').value}).`}catch(e){alert(e.message)}await load();render()}
-V.registrar_Import=()=>`<div class="card"><h2>Import students</h2><p class="mut">Google Sheet: <b>File → Download → CSV</b>, then choose the file. Ledger files with headers like <i>Student ID, Student Name, Course / Program, Current Year Level, Course Code, Grade</i> are read automatically (one row per student per subject). Simple files with columns <code>id, name, course, year, status, tuition</code> also work. Only year 2–4 students are imported; existing IDs are updated.</p><label><input type="checkbox" id="cur"> Treat the listed subjects as this term's enrollment (marks these students enrolled)</label>
+V.registrar_Import=()=>`<div class="card"><h2>Import students</h2><p class="mut">Google Sheet: <b>File → Download → CSV</b>, then choose the file. Ledger files with headers like <i>Student ID, Student Name, Course / Program, Current Year Level, Course Code, Grade</i> are read automatically (one row per student per subject). Simple files with columns <code>id, name, course, year, status, tuition</code> also work. Every student in the file is imported. Year level comes from the subjects with a blank grade (the term in progress). Students with earlier subjects that are failed, incomplete or missing, or with current subjects from different year levels, are tagged irregular. Existing IDs are updated.</p><div class="row"><b>This file is for the:</b> <select id="icu"><option value="old">Old curriculum (2nd–4th year ledger)</option><option value="new">New curriculum (1st year ledger)</option></select></div><label><input type="checkbox" id="cur"> Mark students as enrolled in their current (blank-grade) subjects</label>
  <div class="row"><input type="file" accept=".csv,.tsv,.txt" onchange="const f=this.files[0];if(f)f.text().then(t=>$('#csv').value=t)"></div><textarea id="csv" placeholder="2024-0001,Juan Dela Cruz,BSIT,2,regular,25000"></textarea><div class="row"><button class="btn p" onclick="imp()">Import</button></div></div>`;
 function parseCSV(t){const rows=[];let r=[],c='',q=false;for(let i=0;i<t.length;i++){const ch=t[i];if(q){if(ch=='"'){if(t[i+1]=='"'){c+='"';i++}else q=false}else c+=ch}else if(ch=='"')q=true;else if(ch==','||ch=='\t'){r.push(c);c=''}else if(ch=='\n'||ch=='\r'){if(ch=='\r'&&t[i+1]=='\n')i++;r.push(c);rows.push(r);r=[];c=''}else c+=ch}if(c!==''||r.length){r.push(c);rows.push(r)}return rows.filter(x=>x.some(v=>v.trim()))}
 const up=async(t,a,o)=>{for(let i=0;i<a.length;i+=500){const r=await sb.from(t).upsert(a.slice(i,i+500),o);if(r.error)throw r.error}};
 const yr=v=>{v=String(v||'').toLowerCase();const m=v.match(/[1-9]/);if(m)return +m[0];return {first:1,second:2,third:3,fourth:4}[(v.match(/first|second|third|fourth/)||[])[0]]||0};
 async function imp(){const rows=parseCSV($('#csv').value);if(!rows.length)return alert('Choose a file or paste data first.');
- const H=rows[0].map(h=>h.replace(/\s+/g,' ').trim().toLowerCase()),fx=(...k)=>H.findIndex(h=>k.includes(h)),cur=$('#cur').checked;
- const iId=fx('student id','student number','student no','student no.','id'),sm=new Map(),sb_=new Map(),gr=new Map(),cs={};let skipped=new Set();
+ const H=rows[0].map(h=>h.replace(/\s+/g,' ').trim().toLowerCase()),fx=(...k)=>H.findIndex(h=>k.includes(h)),cur=$('#cur').checked,fcu=$('#icu').value,iId=fx('student id','student number','student no','student no.','id');
+ const sm=new Map(),sj={},out=[],gr=new Map(),rq=[],ns=new Map();let irr=0;
  try{
- if(iId>=0){const iMj=fx('major'),iN=fx('student name','name'),iC=fx('course / program','program'),iY=H.findIndex(h=>h.includes('year')),iCode=fx('course code','subject code','code'),iG=fx('grade','final grade'),iT=fx('course title','subject title','descriptive title','subject','description'),iU=fx('units','unit');
-  let last={};
-  rows.slice(1).forEach(c=>{const g=i=>i>=0?(c[i]||'').trim():'';let id=g(iId);if(id)last={id,name:g(iN)||(last.name||''),course:g(iC),year:yr(g(iY)),major:g(iMj)};else id=last.id;if(!id)return;
-   if(!(last.year>=2&&last.year<=4)){skipped.add(id);return}
-   if(!sm.has(id))sm.set(id,{id,name:last.name,course:last.course,year:last.year,major:last.major});
-   const code=g(iCode);if(!code)return;cs[id]=(cs[id]||new Set()).add(code);
-   const cu=(stu(id)||{}).curriculum||'old',k=cu+'|'+last.course+'|'+code;if(!sub(code,{curriculum:cu,course:last.course,major:last.major})&&!sb_.has(k))sb_.set(k,{curriculum:cu,program:last.course,major:'',code,title:g(iT)||code,units:+g(iU)||3,prereq:''});
-   let gv=g(iG);if(gv!==''){gv=isNaN(gv)?gv.toUpperCase():(+gv).toFixed(2);gr.set(id+'|'+code,{student_id:id,code,grade:gv})}})
- }else{rows.forEach(c=>{if(c.length<4||c[0].trim().toLowerCase()=='id')return;const y=+c[3];if(!(y>=2&&y<=4)){skipped.add(c[0]);return}
-   sm.set(c[0].trim(),{id:c[0].trim(),name:c[1].trim(),course:c[2].trim(),year:y,status:STAT.includes((c[4]||'').trim().toLowerCase())?c[4].trim().toLowerCase():'regular',tuition:pa(c[5]||0)})})}
- const st=[...sm.values()];if(cur)st.forEach(s=>s.enrolled=true);
- await up('students',st);
- if(sb_.size)await up('subjects',[...sb_.values()],{onConflict:'curriculum,program,major,code',ignoreDuplicates:true});
+ if(iId>=0){const iN=fx('student name','name'),iMj=fx('major'),iC=fx('course / program','program'),iY=H.findIndex(h=>h.includes('year')),iCode=fx('course code','subject code','code'),iG=fx('grade','final grade'),iT=fx('course title','subject title','descriptive title','subject','description'),iU=fx('units','unit');let last={};
+  rows.slice(1).forEach(c=>{const g=i=>i>=0?(c[i]||'').trim():'';let id=g(iId);if(id)last={id,name:g(iN)||(last.name||''),course:g(iC),major:g(iMj),year:yr(g(iY))};else id=last.id;if(!id)return;
+   if(!sm.has(id))sm.set(id,{id,name:last.name,course:last.course,major:last.major,colYear:last.year});
+   const code=g(iCode);if(!code)return;let gv=g(iG);if(gv!=='')gv=isNaN(gv)?gv.toUpperCase():(+gv).toFixed(2);
+   (sj[id]??=[]).push({code,grade:gv,title:g(iT),units:+g(iU)||0})});
+  const SK=x=>x.year_level*10+Math.max(0,SEM.indexOf(x.semester));
+  for(const s of sm.values()){const list=sj[s.id]||[],ex=stu(s.id),pg=(s.course||'').trim();
+   const exact=(code,k)=>S.subj.find(x=>x.curriculum==k&&x.code==code&&(x.program||'').trim()==pg);
+   const cu=(ex&&ex.status=='transfer')?ex.curriculum:fcu;
+   const info=r=>exact(r.code,cu)||S.subj.find(x=>x.curriculum==cu&&x.code==r.code);
+   const blank=list.filter(r=>r.grade===''),cs=blank.map(info).filter(x=>x&&x.year_level>0),all=list.map(info).filter(x=>x&&x.year_level>0);
+   const year=cs.length?Math.max(...cs.map(x=>x.year_level)):(all.length?Math.max(...all.map(x=>x.year_level)):(s.colYear||1));
+   const passed=new Set(list.filter(r=>num(r.grade)&&+r.grade<=3).map(r=>r.code)),curCodes=new Set(blank.map(r=>r.code));
+   const curBlock=cs.length?Math.max(...cs.map(SK)):(all.length?Math.max(...all.map(SK))+1:0);
+   const need=S.subj.filter(x=>x.curriculum==cu&&(x.program||'').trim()==pg&&(NA(x.major)||!s.major||NA(s.major)||x.major==s.major)&&x.year_level>0);
+   const gaps=need.filter(x=>SK(x)<curBlock&&!passed.has(x.code)&&!curCodes.has(x.code)),mixed=new Set(cs.map(x=>x.year_level)).size>1;
+   const lock=ex&&['transfer','drop'].includes(ex.status),inc=gaps.length>0||mixed;if(inc)irr++;
+   out.push({id:s.id,name:s.name,course:s.course,major:s.major,year,curriculum:cu,status:lock?ex.status:(inc?'irregular':'regular'),enrolled:cur&&blank.length?true:!!(ex&&ex.enrolled)});
+   list.forEach(r=>{if(r.grade!=='')gr.set(s.id+'|'+r.code,{student_id:s.id,code:r.code,grade:r.grade});if(!info(r))ns.set(cu+'|'+pg+'|'+r.code,{curriculum:cu,program:s.course,major:'',code:r.code,title:r.title||r.code,units:r.units||3,prereq:''})});
+   if(cur&&blank.length)rq.push({student_id:s.id,subjects:[...curCodes],status:'enrolled'})}
+ }else{rows.forEach(c=>{if(c.length<4||c[0].trim().toLowerCase()=='id')return;const y=+c[3];if(!(y>=1))return;out.push({id:c[0].trim(),name:c[1].trim(),course:c[2].trim(),year:y,status:STAT.includes((c[4]||'').trim().toLowerCase())?c[4].trim().toLowerCase():'regular',tuition:pa(c[5]||0),curriculum:fcu})})}
+ await up('students',out);
+ if(ns.size)await up('subjects',[...ns.values()],{onConflict:'curriculum,program,major,code',ignoreDuplicates:true});
  if(gr.size)await up('grades',[...gr.values()]);
- if(cur)await up('requests',Object.entries(cs).map(([id,s])=>({student_id:id,subjects:[...s],status:'enrolled'})));
- flash=`Imported ${st.length} student(s), ${sb_.size} subject(s) and ${gr.size} grade(s). Skipped ${skipped.size} student(s) not in 2nd–4th year.`;
- }catch(e){alert('Import stopped: '+e.message+(/row-level security/i.test(e.message)?'\nRun the grades policy SQL from the chat, then try again.':''))}
+ if(rq.length)await up('requests',rq);
+ flash=`Imported ${out.length} student(s) and ${gr.size} grade(s). ${irr} tagged irregular (incomplete or mixed-year subjects).`;
+ }catch(e){alert('Import stopped: '+e.message+(/row-level security/i.test(e.message)?'\nRun the grades policy SQL from the chat, then try again.':'')+(/year_check/i.test(e.message)?'\nRun the "all students" SQL from the chat first.':''))}
  await load();render()}
 /* PROGRAMS & DIRECTORY (registrar + dean) */
 let progSel='',progMaj='all',progCur='old',dirT='students',dirQ='',dirSel=null;
@@ -166,7 +176,7 @@ V.registrar_Programs=()=>{const P=progs();if(!P.length)return'<div class="card m
  return`<div class="card"><h2>Programs</h2><div class="row"><select onchange="progSel=this.value;progMaj='all';render()">${P.map(p=>`<option ${p==progSel?'selected':''}>${esc(p)}</option>`).join('')}</select>${maj.length?`<select onchange="progMaj=this.value;render()"><option value="all">All majors</option>${maj.map(m=>`<option ${m==progMaj?'selected':''}>${esc(m)}</option>`).join('')}</select>`:''}</div>
  <div class="grid"><div class="stat"><b>${st.length}</b>Students</div><div class="stat"><b>${en.length}</b>Enrolled</div><div class="stat"><b>${st.length-en.length}</b>Not yet enrolled</div><div class="stat"><b>${tg(st,'regular')}</b>Regular</div><div class="stat"><b>${tg(st,'irregular')}</b>Irregular</div><div class="stat"><b>${tg(st,'transfer')}</b>Transfer</div><div class="stat"><b>${tg(st,'drop')}</b>Drop</div><div class="stat"><b>${Object.keys(fm).length}</b>Faculty</div></div>
  <p class="mut">Among enrolled: regular ${tg(en,'regular')}, irregular ${tg(en,'irregular')}, transfer ${tg(en,'transfer')}, drop ${tg(en,'drop')}</p>
- <table style="max-width:420px"><tr><th>Year level</th><th>Students</th><th>Enrolled</th></tr>${[2,3,4].map(y=>`<tr><td>${y}</td><td>${st.filter(s=>s.year==y).length}</td><td>${en.filter(s=>s.year==y).length}</td></tr>`).join('')}</table></div>
+ <table style="max-width:420px"><tr><th>Year level</th><th>Students</th><th>Enrolled</th></tr>${[1,2,3,4].map(y=>`<tr><td>${y}</td><td>${st.filter(s=>s.year==y).length}</td><td>${en.filter(s=>s.year==y).length}</td></tr>`).join('')}</table></div>
  <div class="card"><h2>Faculty</h2>${Object.keys(fm).length?Object.entries(fm).map(([id,c])=>`<div style="margin:4px 0"><button class="btn s" onclick="openFac('${id}')">${esc(pname(id))}</button> <span class="mut">${c.map(esc).join(', ')}</span></div>`).join(''):'<p class="mut">No teachers assigned to this program\'s subjects yet (assign them in the Subjects tab).</p>'}</div>
  <div class="card"><h2>Subjects</h2><div class="row"><button class="btn ${progCur=='new'?'p':''}" onclick="progCur='new';render()">New curriculum</button><button class="btn ${progCur=='old'?'p':''}" onclick="progCur='old';render()">Old curriculum</button></div>
  <div class="scroll"><table><tr><th>Code</th><th>Title</th><th>Units</th><th>Prereq</th><th>Teacher</th></tr>${subs.map(x=>{const g=x.year_level+'|'+x.semester,h=g!=last?`<tr><td colspan="5"><b>${YL(x.year_level)} · ${esc(x.semester)}</b></td></tr>`:'';last=g;return h+`<tr><td>${esc(x.code)}</td><td>${esc(x.title)}</td><td>${x.units}</td><td>${esc(x.prereq)||'—'}</td><td>${x.teacher?esc(pname(x.teacher)):'—'}</td></tr>`}).join('')||'<tr><td class="mut">No subjects in this curriculum.</td></tr>'}</table></div></div>
