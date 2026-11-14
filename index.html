@@ -37,8 +37,10 @@ let S={school:'School Portal',term:'',students:[],subj:[],req:{},gr:{},posts:[],
 const TABS={registrar:['Dashboard','Enrollment','Students','Programs','Directory','Subjects','Import'],finance:['Payments'],dean:['Announcements','Honors','Programs','Directory'],faculty:['Grades'],student:['Home','Schedule','Grades','Enroll']};
 const ALIAS='worksibtech.do@gmail.com';
 const em=u=>{u=u.trim().toLowerCase();if(u.includes('@'))return u;const [l,d]=ALIAS.split('@');return l+'+'+u.replace(/[^a-z0-9._-]/g,'')+'@'+d};
+const ORD={students:['id'],subjects:['curriculum','program','major','code'],requests:['student_id'],grades:['student_id','code'],posts:['id'],honors:['student_id','kind'],settings:['id'],profiles:['id'],fee_template:['id']};
+async function allRows(t){let out=[],i=0;for(;;){let q=sb.from(t).select('*');(ORD[t]||[]).forEach(c=>{q=q.order(c)});const {data,error}=await q.range(i,i+999);if(error||!data)break;out=out.concat(data);if(data.length<1000)break;i+=1000}return out}
 async function load(){const T=['students','subjects','requests','grades','posts','honors','settings','profiles','fee_template'];
- const r=await Promise.all(T.map(t=>sb.from(t).select('*')));const [st,su,rq,gr,po,ho,se,pr,ft]=r.map(x=>x.data||[]);
+ const [st,su,rq,gr,po,ho,se,pr,ft]=await Promise.all(T.map(allRows));
  S.students=st.sort((a,b)=>a.name.localeCompare(b.name));S.subj=su;S.req={};rq.forEach(x=>S.req[x.student_id]={subs:x.subjects,status:x.status});
  S.gr={};gr.forEach(x=>(S.gr[x.student_id]??={})[x.code]=x.grade);S.posts=po.sort((a,b)=>b.id-a.id);
  S.honors={dean:[],latin:{}};ho.forEach(x=>x.kind=='dean'?S.honors.dean.push(x.student_id):S.honors.latin[x.student_id]=x.level);
@@ -68,7 +70,10 @@ const V={};
 /* REGISTRAR */
 V.registrar_Dashboard=()=>{const c=k=>S.students.filter(s=>s.status==k).length,en=S.students.filter(s=>s.enrolled).length,pend=Object.values(S.req).filter(r=>r.status=='pending').length;
  return`<div class="card"><h2>Enrollment summary — ${esc(S.term)}</h2><div class="grid"><div class="stat"><b>${S.students.length}</b>Total students</div><div class="stat"><b>${en}</b>Enrolled</div><div class="stat"><b>${pend}</b>Pending</div>${STAT.map(k=>`<div class="stat"><b>${c(k)}</b>${k}</div>`).join('')}</div>
- <div class="row"><input id="sn" value="${esc(S.school)}"><input id="tm" value="${esc(S.term)}"><button class="btn" onclick="go(sb.from('settings').update({school:$('#sn').value,term:$('#tm').value}).eq('id',1))">Save school / term</button></div></div>`};
+ <div class="row"><input id="sn" value="${esc(S.school)}"><input id="tm" value="${esc(S.term)}"><button class="btn" onclick="go(sb.from('settings').update({school:$('#sn').value,term:$('#tm').value}).eq('id',1))">Save school / term</button></div></div>
+ <div class="card"><h2>Staff accounts</h2><p class="mut">Create logins for faculty, finance, dean's office or other registrars. Staff sign in with the username and password you set here.</p>
+ <div class="row"><input id="fu" placeholder="Username"><input id="fn" placeholder="Full name"><input id="fp" placeholder="Password (6+ chars)"><select id="fr"><option value="faculty">Faculty</option><option value="finance">Finance</option><option value="dean">Dean's office</option><option value="registrar">Registrar</option></select><button class="btn p" onclick="addFac()">Create</button></div>
+ <div class="scroll"><table><tr><th>Name</th><th>Username</th><th>Role</th></tr>${S.profiles.filter(p=>p.role!='student').map(p=>`<tr><td>${esc(p.full_name)}</td><td>${esc(p.username)}</td><td>${p.role}</td></tr>`).join('')}</table></div></div>`};
 V.registrar_Enrollment=()=>{const rs=Object.entries(S.req);return`<div class="card"><h2>Enrollment requests</h2>${rs.length?`<div class="scroll"><table><tr><th>Student</th><th>Subjects</th><th>Prerequisites</th><th>Finance cleared</th><th>Status / Enrolled</th><th></th></tr>${rs.map(([id,r])=>{const s=stu(id);if(!s)return'';const w=r.subs.flatMap(c=>{const x=sub(c,s);return x?unmet(id,x).map(p=>c+' needs '+p):[]});
  return`<tr><td>${esc(s.name)}<br><span class="mut">${esc(id)} · Yr ${s.year}</span></td><td>${r.subs.join(', ')}<br><span class="mut">${units(r.subs,s)} units</span></td><td>${w.length?`<span class="warn">${w.join('; ')}</span>`:'<span class="ok">All met</span>'}</td><td><input type="checkbox" ${s.cleared?'checked':''} onchange="go(sb.from('students').update({cleared:this.checked}).eq('id','${id}'))"> <span class="mut">Bal ${peso(bal(s))}</span></td><td>${r.status}</td><td><label><input type="checkbox" ${s.enrolled?'checked':''} onchange="decide('${id}',this.checked?1:2)"> Enrolled</label> <button class="btn s d" onclick="decide('${id}',0)">Reject</button> <button class="btn s" onclick="printForm('${id}')">Print form</button></td></tr>`}).join('')}</table></div>`:'<p class="mut">No requests yet.</p>'}</div>`};
 async function setEnr(id,on){await sb.from('students').update({enrolled:on}).eq('id',id);if(S.req[id])await sb.from('requests').update({status:on?'enrolled':'pending'}).eq('student_id',id);await load();render()}
@@ -109,8 +114,7 @@ V.registrar_Subjects=()=>{const flt=subFilters(),list=S.subj.filter(subOK).sort(
  <div class="row"><select id="icur"><option value="new" ${subCur=='new'?'selected':''}>New curriculum</option><option value="old" ${subCur=='old'?'selected':''}>Old curriculum</option></select><input type="file" accept=".csv,.tsv,.txt" onchange="const f=this.files[0];if(f)f.text().then(t=>$('#scsv').value=t)"></div><textarea id="scsv"></textarea><div class="row"><button class="btn p" onclick="impSubj()">Import subjects</button></div></div>
  <div class="card"><h2>Subjects</h2><div class="row"><button class="btn ${subCur=='new'?'p':''}" onclick="subCur='new';render()">New curriculum (${cnt('new')})</button><button class="btn ${subCur=='old'?'p':''}" onclick="subCur='old';render()">Old curriculum (${cnt('old')})</button></div>${flt}
  <div class="scroll"><table><tr><th>Code</th><th>Title</th><th>Lec</th><th>Lab</th><th>Units</th><th>Prereq</th><th>Teacher</th><th>Days</th><th>Time</th><th>Room</th><th></th></tr>${list.map(s=>{const i=S.subj.indexOf(s),g=s.year_level+'|'+s.semester,h=g!=last?`<tr><td colspan="11"><b>${YL(s.year_level)} · ${esc(s.semester)}</b></td></tr>`:'';last=g;
- return h+`<tr><td>${esc(s.code)}</td><td>${esc(s.title)}</td><td>${s.lec}</td><td>${s.lab}</td><td>${s.units}</td><td>${esc(s.prereq)||'—'}</td><td><select onchange="updSub(${i},{teacher:this.value||null})"><option value="">—</option>${fac.map(u=>`<option value="${u.id}" ${s.teacher==u.id?'selected':''}>${esc(u.full_name)}</option>`).join('')}</select></td><td><input size="8" value="${esc(s.days)}" onchange="updSub(${i},{days:this.value})"></td><td><input size="9" value="${esc(s.time)}" onchange="updSub(${i},{time:this.value})"></td><td><input size="6" value="${esc(s.room)}" onchange="updSub(${i},{room:this.value})"></td><td><button class="btn s d" onclick="delSub(${i})">✕</button></td></tr>`}).join('')||'<tr><td class="mut">No subjects yet. Import a curriculum above.</td></tr>'}</table></div></div>
- <div class="card"><h3>Add staff login</h3><div class="row"><input id="fu" placeholder="Username"><input id="fn" placeholder="Full name"><input id="fp" placeholder="Password (6+ chars)"><select id="fr"><option value="faculty">Faculty</option><option value="finance">Finance</option><option value="dean">Dean's office</option><option value="registrar">Registrar</option></select><button class="btn" onclick="addFac()">Create</button></div></div>`};
+ return h+`<tr><td>${esc(s.code)}</td><td>${esc(s.title)}</td><td>${s.lec}</td><td>${s.lab}</td><td>${s.units}</td><td>${esc(s.prereq)||'—'}</td><td><select onchange="updSub(${i},{teacher:this.value||null})"><option value="">—</option>${fac.map(u=>`<option value="${u.id}" ${s.teacher==u.id?'selected':''}>${esc(u.full_name)}</option>`).join('')}</select></td><td><input size="8" value="${esc(s.days)}" onchange="updSub(${i},{days:this.value})"></td><td><input size="9" value="${esc(s.time)}" onchange="updSub(${i},{time:this.value})"></td><td><input size="6" value="${esc(s.room)}" onchange="updSub(${i},{room:this.value})"></td><td><button class="btn s d" onclick="delSub(${i})">✕</button></td></tr>`}).join('')||'<tr><td class="mut">No subjects yet. Import a curriculum above.</td></tr>'}</table></div></div>`};
 function updSub(i,p){const s=S.subj[i];go(sb.from('subjects').update(p).eq('curriculum',s.curriculum).eq('program',s.program).eq('major',s.major).eq('code',s.code))}
 function delSub(i){const s=S.subj[i];if(confirm('Delete '+s.code+'?'))go(sb.from('subjects').delete().eq('curriculum',s.curriculum).eq('program',s.program).eq('major',s.major).eq('code',s.code))}
 async function impSubj(){const rows=parseCSV($('#scsv').value);if(!rows.length)return alert('Choose a file or paste data first.');
@@ -131,6 +135,7 @@ const yr=v=>{v=String(v||'').toLowerCase();const m=v.match(/[1-9]/);if(m)return 
 async function imp(){const rows=parseCSV($('#csv').value);if(!rows.length)return alert('Choose a file or paste data first.');
  const H=rows[0].map(h=>h.replace(/\s+/g,' ').trim().toLowerCase()),fx=(...k)=>H.findIndex(h=>k.includes(h)),cur=$('#cur').checked,fcu=$('#icu').value,iId=fx('student id','student number','student no','student no.','id');
  const sm=new Map(),sj={},out=[],gr=new Map(),rq=[],ns=new Map();let irr=0;
+ const PASS=r=>/^(p|passed|cr|credited|s)$/i.test(r.grade)||(num(r.grade)&&+r.grade<=3);
  try{
  if(iId>=0){const iN=fx('student name','name'),iMj=fx('major'),iC=fx('course / program','program'),iY=H.findIndex(h=>h.includes('year')),iCode=fx('course code','subject code','code'),iG=fx('grade','final grade'),iT=fx('course title','subject title','descriptive title','subject','description'),iU=fx('units','unit');let last={};
   rows.slice(1).forEach(c=>{const g=i=>i>=0?(c[i]||'').trim():'';let id=g(iId);if(id)last={id,name:g(iN)||(last.name||''),course:g(iC),major:g(iMj),year:yr(g(iY))};else id=last.id;if(!id)return;
@@ -140,24 +145,25 @@ async function imp(){const rows=parseCSV($('#csv').value);if(!rows.length)return
   const SK=x=>x.year_level*10+Math.max(0,SEM.indexOf(x.semester));
   for(const s of sm.values()){const list=sj[s.id]||[],ex=stu(s.id),pg=(s.course||'').trim();
    const exact=(code,k)=>S.subj.find(x=>x.curriculum==k&&x.code==code&&(x.program||'').trim()==pg);
-   const cu=(ex&&ex.status=='transfer')?ex.curriculum:fcu;
+   const lock=ex&&['transfer','drop'].includes(ex.status),cu=lock?ex.curriculum:fcu;
    const info=r=>exact(r.code,cu)||S.subj.find(x=>x.curriculum==cu&&x.code==r.code);
-   const blank=list.filter(r=>r.grade===''),cs=blank.map(info).filter(x=>x&&x.year_level>0),all=list.map(info).filter(x=>x&&x.year_level>0);
-   const year=cs.length?Math.max(...cs.map(x=>x.year_level)):(all.length?Math.max(...all.map(x=>x.year_level)):(s.colYear||1));
-   const passed=new Set(list.filter(r=>num(r.grade)&&+r.grade<=3).map(r=>r.code)),curCodes=new Set(blank.map(r=>r.code));
-   const curBlock=cs.length?Math.max(...cs.map(SK)):(all.length?Math.max(...all.map(SK))+1:0);
+   const rs=list.map(r=>({r,x:info(r)})).filter(o=>o.x&&o.x.year_level>0),gd=rs.filter(o=>o.r.grade!==''),bl=rs.filter(o=>o.r.grade==='');
+   const lastG=gd.length?Math.max(...gd.map(o=>SK(o.x))):-1,ahead=bl.filter(o=>SK(o.x)>=lastG);
+   const curKey=ahead.length?Math.min(...ahead.map(o=>SK(o.x))):Infinity;
+   const year=curKey<Infinity?Math.floor(curKey/10):(gd.length?Math.max(...gd.map(o=>o.x.year_level)):(s.colYear||1));
+   const curCodes=ahead.filter(o=>SK(o.x)==curKey).map(o=>o.r.code);
    const need=S.subj.filter(x=>x.curriculum==cu&&(x.program||'').trim()==pg&&(NA(x.major)||!s.major||NA(s.major)||x.major==s.major)&&x.year_level>0);
-   const gaps=need.filter(x=>SK(x)<curBlock&&!passed.has(x.code)&&!curCodes.has(x.code)),mixed=new Set(cs.map(x=>x.year_level)).size>1;
-   const lock=ex&&['transfer','drop'].includes(ex.status),inc=gaps.length>0||mixed;if(inc)irr++;
-   out.push({id:s.id,name:s.name,course:s.course,major:s.major,year,curriculum:cu,status:lock?ex.status:(inc?'irregular':'regular'),enrolled:cur&&blank.length?true:!!(ex&&ex.enrolled)});
+   const failed=gd.some(o=>!PASS(o.r)),gaps=bl.some(o=>SK(o.x)<curKey),missing=need.some(x=>SK(x)<curKey&&!list.some(r=>r.code==x.code));
+   const inc=failed||gaps||missing;if(inc)irr++;
+   out.push({id:s.id,name:s.name,course:s.course,major:s.major,year,curriculum:cu,status:lock?ex.status:(inc?'irregular':'regular'),enrolled:cur&&curCodes.length?true:!!(ex&&ex.enrolled)});
    list.forEach(r=>{if(r.grade!=='')gr.set(s.id+'|'+r.code,{student_id:s.id,code:r.code,grade:r.grade});if(!info(r))ns.set(cu+'|'+pg+'|'+r.code,{curriculum:cu,program:s.course,major:'',code:r.code,title:r.title||r.code,units:r.units||3,prereq:''})});
-   if(cur&&blank.length)rq.push({student_id:s.id,subjects:[...curCodes],status:'enrolled'})}
+   if(cur&&curCodes.length)rq.push({student_id:s.id,subjects:curCodes,status:'enrolled'})}
  }else{rows.forEach(c=>{if(c.length<4||c[0].trim().toLowerCase()=='id')return;const y=+c[3];if(!(y>=1))return;out.push({id:c[0].trim(),name:c[1].trim(),course:c[2].trim(),year:y,status:STAT.includes((c[4]||'').trim().toLowerCase())?c[4].trim().toLowerCase():'regular',tuition:pa(c[5]||0),curriculum:fcu})})}
  await up('students',out);
  if(ns.size)await up('subjects',[...ns.values()],{onConflict:'curriculum,program,major,code',ignoreDuplicates:true});
  if(gr.size)await up('grades',[...gr.values()]);
  if(rq.length)await up('requests',rq);
- flash=`Imported ${out.length} student(s) and ${gr.size} grade(s). ${irr} tagged irregular (incomplete or mixed-year subjects).`;
+ flash=`Imported ${out.length} student(s) and ${gr.size} grade(s). ${irr} tagged irregular (failed, incomplete or skipped subjects).`;
  }catch(e){alert('Import stopped: '+e.message+(/row-level security/i.test(e.message)?'\nRun the grades policy SQL from the chat, then try again.':'')+(/year_check/i.test(e.message)?'\nRun the "all students" SQL from the chat first.':''))}
  await load();render()}
 /* PROGRAMS & DIRECTORY (registrar + dean) */
